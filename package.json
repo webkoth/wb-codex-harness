@@ -1,0 +1,28 @@
+{
+  "name": "wb-codex-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Harness для работы Codex с Wildberries: MCP, скрипты расчёта, скиллы",
+  "workspaces": ["mcp/wb-mcp"],
+  "scripts": {
+    "build": "npm run build -w wb-mcp",
+    "check": "tsx scripts/check.ts",
+    "cost:import": "tsx scripts/cost-import.ts",
+    "profit": "tsx scripts/profit.ts",
+    "funnel": "tsx scripts/funnel.ts",
+    "rollback": "tsx scripts/rollback.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck -w wb-mcp"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": { "node": ">=20" }
+}

@@ -1,0 +1,47 @@
+# Шаблон проектного конфига Codex. setup.sh подставляет пути и пишет .codex/config.toml.
+# Codex читает .codex/config.toml только в доверенном проекте (trust при первом запуске).
+
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
+[sandbox_workspace_write]
+# сеть нужна скриптам scripts/*.ts (API WB); MCP-сервер работает вне песочницы
+network_access = true
+
+[mcp_servers.wb]
+command = "__NODE__"
+args = ["__ROOT__/mcp/wb-mcp/dist/index.js"]
+cwd = "__ROOT__"
+startup_timeout_sec = 20
+tool_timeout_sec = 180
+required = true
+# чтение — без вопросов; запись — только после подтверждения человека (ниже)
+default_tools_approval_mode = "auto"
+enabled_tools = [
+  "wb_get_cards", "wb_update_card",
+  "wb_get_prices", "wb_update_price",
+  "wb_get_inventory", "wb_get_products_in_stock", "wb_get_warehouses",
+  "wb_get_orders", "wb_get_sales", "wb_get_sales_funnel",
+  "wb_get_campaigns", "wb_get_campaign_stats",
+  "wb_pause_campaign", "wb_update_campaign_budget", "wb_update_campaign_cpm",
+  "wb_get_reviews", "wb_reply_review",
+  "wb_get_realization_report", "wb_get_balance", "wb_get_seller_info",
+]
+
+[mcp_servers.wb.tools.wb_update_card]
+approval_mode = "prompt"
+
+[mcp_servers.wb.tools.wb_update_price]
+approval_mode = "prompt"
+
+[mcp_servers.wb.tools.wb_pause_campaign]
+approval_mode = "prompt"
+
+[mcp_servers.wb.tools.wb_update_campaign_budget]
+approval_mode = "prompt"
+
+[mcp_servers.wb.tools.wb_update_campaign_cpm]
+approval_mode = "prompt"
+
+[mcp_servers.wb.tools.wb_reply_review]
+approval_mode = "prompt"

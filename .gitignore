@@ -1,0 +1,14 @@
+node_modules/
+mcp/wb-mcp/dist/
+.env
+.env.*
+!.env.example
+.codex/config.toml
+# данные клиента: не версионируются
+data/*
+!data/.gitkeep
+drafts/*
+!drafts/.gitkeep
+reports/*
+!reports/.gitkeep
+.DS_Store
