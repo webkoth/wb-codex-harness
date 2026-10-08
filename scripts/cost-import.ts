@@ -2,16 +2,21 @@
  * Импорт себестоимости из таблицы клиента любого формата → data/cost.csv.
  *
  *   npx tsx scripts/cost-import.ts <файл.csv|xlsx> [--sheet Лист1] [--sku-col "Артикул"] \
- *       [--cost-col "Себестоимость" | "Закупка+Упаковка"] [--key vendorCode|nmId|barcode] [--no-wb]
+ *       [--cost-col "Себестоимость" | "Закупка+Упаковка"] [--key vendorCode|nmId|barcode] [--no-wb] \
+ *       [--supplier "Поставщик"] [--prefer-new] [--replace] [--dry]
  *
  * Ключ на выходе — артикул продавца. Если в таблице nmID или баркод, переводим через карточки WB.
+ * Загрузка складывается с уже записанной: новая цифра заменяет старую по артикулу, остальные артикулы
+ * остаются. --replace — заменить файл целиком. Прежний файл сохраняется в data/cost.prev.csv.
  * Ничего не угадываем молча: при двусмысленности печатаем шапку и выходим с кодом 2.
  */
-import { join } from 'node:path';
+import { copyFileSync, existsSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { parseArgs } from './lib/args.js';
 import { DATA, ensureDir } from './lib/env.js';
 import { readSheets, writeCsv } from './lib/table.js';
-import { detectColumns, extractCosts, type KeyKind } from './lib/cost.js';
+import { detectColumns, extractCosts, mergeCosts, type KeyKind, type StoredCost } from './lib/cost.js';
+import { COST_COLUMNS, loadCostRows } from './lib/costfile.js';
 import { fetchAllCards, type CardRef } from './lib/cards.js';
 
 const { positional, str, flag } = parseArgs();
@@ -100,11 +105,36 @@ if (multi.length > 0) {
 const unique = [...new Map(out.map((r) => [String(r.vendorCode), r])).values()];
 
 const target = join(ensureDir(DATA), 'cost.csv');
-writeCsv(target, unique, ['vendorCode', 'nmId', 'cost', 'sourceRow']);
-console.log(`\nЗаписано: ${target} (${unique.length} артикулов)`);
+const supplier = str('supplier') ?? '';
+const incoming: StoredCost[] = unique.map((r) => ({
+  vendorCode: String(r.vendorCode), nmId: String(r.nmId), cost: Number(r.cost), sourceRow: Number(r.sourceRow), sourceFile: basename(file), supplier,
+}));
+const existing = flag('replace') ? [] : loadCostRows(target);
+const merged = mergeCosts(existing, incoming, { preferNew: flag('prefer-new') });
+
+if (merged.conflicts.length > 0) {
+  console.error(`\nОдин артикул у двух поставщиков с разной себестоимостью (${merged.conflicts.length}). Ничего не записано:`);
+  merged.conflicts.slice(0, 20).forEach((c) => console.error(`  ${c}`));
+  console.error('Решите, чья цифра верна. Взять из этого файла: повторите с --prefer-new.');
+  process.exit(3);
+}
+
+if (existing.length > 0) {
+  console.log(`\nК прежним ${existing.length} артикулам: новых ${merged.added.length}, изменилась себестоимость у ${merged.changed.length}, без изменений ${merged.unchanged}, не из этого файла ${merged.kept}`);
+  for (const c of merged.changed.slice(0, 20)) console.log(`    ${c.vendorCode}: ${c.was} → ${c.now}${c.wasFile ? ` (было из ${c.wasFile})` : ''}`);
+  if (merged.changed.length > 20) console.log(`    … ещё ${merged.changed.length - 20}`);
+}
+
+if (flag('dry')) {
+  console.log(`\nПробный прогон: ${target} не тронут.`);
+} else {
+  if (existsSync(target)) copyFileSync(target, join(DATA, 'cost.prev.csv'));
+  writeCsv(target, merged.rows as unknown as Record<string, unknown>[], COST_COLUMNS);
+  console.log(`\nЗаписано: ${target} (${merged.rows.length} артикулов)`);
+}
 
 if (cards.length > 0) {
-  const have = new Set(unique.map((r) => String(r.vendorCode)));
+  const have = new Set(merged.rows.map((r) => r.vendorCode));
   const missing = cards.filter((c) => !have.has(c.vendorCode));
   if (notOnWb.length) console.log(`\n⚠ В таблице, но нет на WB (${notOnWb.length}): ${notOnWb.slice(0, 15).join(', ')}${notOnWb.length > 15 ? ' …' : ''}`);
   if (missing.length) {

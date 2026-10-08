@@ -138,3 +138,52 @@ export function normalizeKey(v: unknown, kind: KeyKind): string {
   if (kind !== 'vendorCode') s = s.replace(/\s/g, '').replace(/\.0+$/, '');
   return s;
 }
+
+/** Строка data/cost.csv. `supplier` пустой, если при загрузке поставщика не назвали. */
+export interface StoredCost {
+  vendorCode: string;
+  nmId: string;
+  cost: number;
+  sourceRow: number | string;
+  sourceFile: string;
+  supplier: string;
+}
+
+export interface MergeResult {
+  rows: StoredCost[];
+  added: StoredCost[];
+  changed: { vendorCode: string; was: number; now: number; wasFile: string }[];
+  unchanged: number;
+  /** Артикулы из прежних загрузок, которых в этом файле нет: остаются как были. */
+  kept: number;
+  /** Один артикул у двух названных поставщиков с разной себестоимостью. Не пусто — ничего не пишем. */
+  conflicts: string[];
+}
+
+/**
+ * Сложить новую загрузку с уже записанной себестоимостью. Новая цифра заменяет старую по артикулу,
+ * остальные артикулы не трогаются: прайс второго поставщика не стирает первого.
+ */
+export function mergeCosts(existing: StoredCost[], incoming: StoredCost[], opts: { preferNew?: boolean } = {}): MergeResult {
+  const byVendor = new Map(existing.map((r) => [r.vendorCode, r]));
+  const added: StoredCost[] = [];
+  const changed: MergeResult['changed'] = [];
+  const conflicts: string[] = [];
+  let unchanged = 0;
+  for (const row of incoming) {
+    const prev = byVendor.get(row.vendorCode);
+    if (!prev) { added.push(row); byVendor.set(row.vendorCode, row); continue; }
+    const same = Math.abs(prev.cost - row.cost) <= 0.005;
+    const otherSupplier = prev.supplier !== '' && row.supplier !== '' && prev.supplier !== row.supplier;
+    if (!same && otherSupplier && !opts.preferNew) {
+      conflicts.push(`${row.vendorCode}: ${prev.supplier} = ${prev.cost}, ${row.supplier} = ${row.cost}`);
+      continue;
+    }
+    if (same) unchanged++;
+    else changed.push({ vendorCode: row.vendorCode, was: prev.cost, now: row.cost, wasFile: prev.sourceFile });
+    byVendor.set(row.vendorCode, { ...row, supplier: row.supplier || prev.supplier });
+  }
+  const touched = new Set(incoming.map((r) => r.vendorCode));
+  const kept = existing.filter((r) => !touched.has(r.vendorCode)).length;
+  return { rows: [...byVendor.values()], added, changed, unchanged, kept, conflicts };
+}
