@@ -96,6 +96,8 @@ export async function getPrices(input: GetPricesInput): Promise<{
     const url = `${WB_API_URLS.prices}/api/v2/list/goods/filter?limit=${PAGE_SIZE}&offset=${currentOffset}`;
 
     const result = await fetchWB<{
+      error?: boolean;
+      errorText?: string;
       data?: {
         listGoods?: Array<{
           nmID: number;
@@ -112,7 +114,9 @@ export async function getPrices(input: GetPricesInput): Promise<{
       };
     }>(url);
 
-    const goods = result.data?.listGoods || [];
+    if (result?.error === true) throw new Error(`WB prices: ${result.errorText || 'чтение отклонено'}`);
+    if (!Array.isArray(result?.data?.listGoods)) throw new Error('WB prices: некорректный ответ чтения');
+    const goods = result.data.listGoods;
     if (goods.length === 0) break;
 
     for (const item of goods) {
@@ -203,9 +207,21 @@ async function getCurrentPrice(nmId: number): Promise<{
 /**
  * Update price with confirmation system
  */
+export interface PriceUpdateResult {
+  success: boolean;
+  nmId: number;
+  newPrice?: number;
+  newDiscount?: number;
+  status: 'applied' | 'pending';
+  taskId: number;
+  journalId: string;
+  warning?: string;
+}
+
 export async function updatePrice(
-  input: UpdatePriceInput
-): Promise<WriteOperationResult<{ success: boolean; nmId: number; newPrice?: number; newDiscount?: number }>> {
+  input: UpdatePriceInput,
+  context: { rollbackOf?: string } = {}
+): Promise<WriteOperationResult<PriceUpdateResult>> {
   const { nmId, price, discount, confirm } = input;
 
   if (price === undefined && discount === undefined) {
@@ -238,78 +254,64 @@ export async function updatePrice(
     return needsConfirmation(preview);
   }
 
-  // Confirmed - apply changes
+  const base = {
+    tool: 'wb_update_price',
+    entity: { type: 'product', id: nmId },
+    before: { nmId, price: current.price, discount: current.discount },
+    after: { nmId, price: newPrice, discount: newDiscount },
+    ...context,
+  };
+  let response: { data?: { id?: number }; error?: boolean; errorText?: string } | undefined;
+  let rejected = false;
   try {
-    // Call WB API to update price
-    const url = `${WB_API_URLS.prices}/api/v2/upload/task`;
-
-    const response = await fetchWB<{ data: unknown; error: boolean; errorText?: string }>(url, {
+    response = await fetchWB(`${WB_API_URLS.prices}/api/v2/upload/task`, {
       method: 'POST',
-      body: JSON.stringify({
-        data: [
-          {
-            nmID: nmId,
-            price: newPrice,
-            discount: newDiscount,
-          },
-        ],
-      }),
+      body: JSON.stringify({ data: [{ nmID: nmId, price: newPrice, discount: newDiscount }] }),
     });
-
-    const preview = createPriceChangePreview({
-      nmId: nmId.toString(),
-      currentPrice: current.price,
-      currentFinalPrice: current.finalPrice,
-      newPrice,
-      currentDiscount: current.discount,
-      newDiscount,
-      toolName: 'wb_update_price',
-    });
-
-    // В журнал — точное БЫЛО для отката: цена и скидка до изменения
-    journalWrite({
-      tool: 'wb_update_price',
-      entity: { type: 'product', id: nmId },
-      before: { nmId, price: current.price, discount: current.discount },
-      after: { nmId, price: newPrice, discount: newDiscount },
-      response,
-      ok: true,
-      reversible: true,
-    });
-    void preview;
-
-    return confirmed({
-      success: true,
-      nmId,
-      newPrice,
-      newDiscount,
-    });
+    if (response?.error === true) {
+      rejected = true;
+      throw new Error(`WB отклонил цену: ${response.errorText || 'error:true'}`);
+    }
+    if (response?.error !== false || (!Number.isInteger(response?.data?.id) || response!.data!.id! < 0)) {
+      throw new Error('Некорректный ответ WB: исход записи неизвестен, не повторяйте запись автоматически.');
+    }
   } catch (error) {
-    journalWrite({
-      tool: 'wb_update_price',
-      entity: { type: 'product', id: nmId },
-      before: { nmId, price: current.price, discount: current.discount },
-      after: { nmId, price: newPrice, discount: newDiscount },
-      ok: false,
-      reversible: false,
-      error: (error as Error).message,
-    });
+    const entry = journalWrite({ ...base, response, ok: false, reversible: !rejected,
+      status: rejected ? 'rejected' : 'unknown', error: (error as Error).message });
     await logError('wb_update_price', 'prices', input, error as Error);
-    throw error;
+    if (rejected) throw error;
+    throw new Error(`${(error as Error).message} Исход записи неизвестен; автоматически повторять нельзя. Журнал: ${entry.id}`);
   }
+
+  let applied = false;
+  let warning = 'Задача принята WB, применение цены и скидки пока не подтверждено.';
+  try {
+    const observed = await getCurrentPrice(nmId);
+    applied = observed?.price === newPrice && observed.discount === newDiscount;
+  } catch (error) {
+    warning += ` Повторное чтение недоступно: ${(error as Error).message}`;
+  }
+  const status = applied ? 'applied' : 'pending';
+  const taskId = response.data!.id!;
+  const entry = journalWrite({ ...base, response, taskId, status, ok: applied, reversible: true });
+  return confirmed({ success: applied, nmId, newPrice, newDiscount, status, taskId,
+    journalId: entry.id, ...(applied ? {} : { warning }) });
 }
 
 /**
  * Format update result for display
  */
 export function formatUpdateResult(
-  result: WriteOperationResult<{ success: boolean; nmId: number; newPrice?: number; newDiscount?: number }>
+  result: WriteOperationResult<PriceUpdateResult>
 ): string {
   if (!result.confirmed) {
     return formatPreviewForDisplay(result.preview);
   }
 
   const { nmId, newPrice, newDiscount } = result.result;
+  if (!result.result.success || result.result.status !== 'applied') {
+    return `Цена ожидает подтверждения WB (pending). nmId: ${nmId}, taskId: ${result.result.taskId}.\n${result.result.warning ?? ''}\nЖурнал: ${result.result.journalId}`;
+  }
   return [
     '## Цена успешно обновлена',
     '',

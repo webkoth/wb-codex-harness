@@ -11,7 +11,7 @@
  */
 import { existsSync, readFileSync } from 'fs';
 import { journalPath, journalWrite, JournalEntry } from '../mcp/wb-mcp/src/utils/logger.js';
-import { updatePrice, UpdatePriceInputSchema } from '../mcp/wb-mcp/src/tools/prices.js';
+import { rollbackPrice } from './lib/rollback-price.js';
 import { fetchRawCard, postCardUpdate, toUpdatePayload, RawCard } from '../mcp/wb-mcp/src/tools/cards.js';
 import {
   updateCampaignCpm,
@@ -61,7 +61,9 @@ async function main(): Promise<void> {
   const yes = args.includes('--yes');
   const entry = entries.find((e) => e.id === id);
   if (!entry) throw new Error(`Запись ${id} не найдена в ${journalPath()}`);
-  if (!entry.ok) throw new Error(`Запись ${id} — неуспешная операция, в кабинете она ничего не поменяла.`);
+  if (!entry.ok && !(entry.tool === 'wb_update_price' && (entry.status === 'pending' || entry.status === 'unknown'))) {
+    throw new Error(`Запись ${id} — операция не подтверждена, автоматический откат недоступен.`);
+  }
   if (!entry.reversible) throw new Error(`Запись ${id} (${entry.tool}) откатить нельзя.`);
   if (entries.some((e) => e.rollbackOf === id && e.ok)) {
     throw new Error(`Запись ${id} уже откатывали. Смотрите --list.`);
@@ -74,10 +76,10 @@ async function main(): Promise<void> {
       console.log(`Цена nmId ${before.nmId}: вернуть price=${before.price}, discount=${before.discount}%`);
       console.log(`(сейчас по журналу: ${short(entry.after)})`);
       if (!yes) break;
-      await updatePrice(
-        UpdatePriceInputSchema.parse({ nmId: before.nmId, price: before.price, discount: before.discount, confirm: true })
-      );
-      break;
+      const result = await rollbackPrice(entry, entries);
+      if (result.success) console.log('Готово. Цена и скидка подтверждены чтением WB.');
+      else console.log(`Откат ожидает подтверждения WB (${result.status}). Журнал: ${result.journalId}. Не повторяйте запись автоматически.`);
+      return;
     }
 
     case 'wb_update_card': {

@@ -68,6 +68,8 @@ export interface JournalEntry {
   reversible: boolean;
   error?: string;
   rollbackOf?: string;
+  status?: 'applied' | 'pending' | 'rejected' | 'unknown';
+  taskId?: number;
 }
 
 // Корень репозитория: 4 уровня вверх от dist/utils (или src/utils под tsx) — как в utils/auth.ts

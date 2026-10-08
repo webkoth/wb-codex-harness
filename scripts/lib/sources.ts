@@ -39,16 +39,16 @@ export interface AdsNm { sum: number; views: number; clicks: number; orders: num
 
 /** Расход рекламы по nmID за период: /adv/v1/promotion/count → /adv/v3/fullstats (до 50 кампаний, до 31 дня, 3 в минуту). */
 export async function fetchAdsByNm(from: string, to: string, fresh = false): Promise<Map<number, AdsNm>> {
-  const obj = await cached(['ads', from, to], fresh, async () => {
+  const obj = await cached(['ads-v2', from, to], fresh, async () => {
     const count = await wbFetch<{ adverts?: Array<{ status: number; advert_list?: Array<{ advertId: number; changeTime?: string }> }> }>(
       `${WB.advert}/adv/v1/promotion/count`,
     );
     // статусы с данными статистики: 7 — завершена, 9 — активна, 11 — пауза
-    const ids = (count?.adverts ?? [])
+    // changeTime — дата изменения кампании, а не граница расходов: период задаёт fullstats.
+    const ids = [...new Set((count?.adverts ?? [])
       .filter((g) => [7, 9, 11].includes(g.status))
       .flatMap((g) => g.advert_list ?? [])
-      .filter((a) => !a.changeTime || a.changeTime.slice(0, 10) >= from) // завершённые до периода не нужны
-      .map((a) => a.advertId);
+      .map((a) => a.advertId))];
     const out: Record<number, AdsNm> = {};
     const windows: [string, string][] = [];
     for (let s = from; s <= to; s = addDays(s, 31)) windows.push([s, addDays(s, 30) < to ? addDays(s, 30) : to]);
