@@ -11,6 +11,8 @@
     "cost:import": "tsx scripts/cost-import.ts",
     "profit": "tsx scripts/profit.ts",
     "funnel": "tsx scripts/funnel.ts",
+    "card-plan": "tsx scripts/card-plan.ts",
+    "ab": "tsx scripts/ab-run.ts",
     "rollback": "tsx scripts/rollback.ts",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck -w wb-mcp"

@@ -30,12 +30,13 @@ git clone <ваш форк> wb && cd wb
 | `$cost-import data/моя-таблица.xlsx` | себестоимость из вашей таблицы как есть → `data/cost.csv` |
 | `$profit за прошлую неделю` | прибыль до налогов по каждому артикулу → `reports/profit-*.xlsx` |
 | `$card-funnel` | где карточки теряют деньги + черновики правок → `drafts/` |
+| `$card-lab` | конкуренты, кадр Б, SEO; тест фото решает ротация, в кабинет само не пишет |
 
 ## Что где
 
 ```
 AGENTS.md                правила для Codex (читается автоматически)
-.agents/skills/          скиллы: setup-check, cost-import, profit, card-funnel
+.agents/skills/          скиллы: setup-check, cost-import, profit, card-funnel, card-lab
 mcp/wb-mcp/              MCP-сервер WB: карточки, цены, реклама, отзывы, воронка
 scripts/                 расчёты: cost-import, profit, funnel, check, rollback
 docs/                    методика прибыли, правила карточек, API WB и схемы
